@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -19,8 +21,8 @@ class DataConverterBase:
     def __init__(self):
         pass
 
-    @abc.abstractmethod
-    def getName(self):
+    @staticmethod
+    def getName():
         return "Error"
 
     # collect data from the binary

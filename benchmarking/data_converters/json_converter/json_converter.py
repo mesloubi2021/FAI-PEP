@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -15,6 +17,7 @@ import json
 import re
 
 from data_converters.data_converter_base import DataConverterBase
+from data_converters.data_converters import registerConverter
 from utils.custom_logger import getLogger
 
 
@@ -22,7 +25,8 @@ class JsonConverter(DataConverterBase):
     def __init__(self):
         super(JsonConverter, self).__init__()
 
-    def getName(self):
+    @staticmethod
+    def getName():
         return "json_converter"
 
     def collect(self, data, args=None):
@@ -38,11 +42,7 @@ class JsonConverter(DataConverterBase):
                 else:
                     result = json.loads(match[0])
                     if (
-                        (
-                            "type" in result
-                            and result["type"] == "NET"
-                            and "value" in result
-                        )
+                        ("type" in result and "value" in result)
                         or ("NET" in result)
                         or ("custom_output" in result)
                     ):  # for backward compatibility
@@ -66,8 +66,14 @@ class JsonConverter(DataConverterBase):
                 table_name = d["table_name"] if "table_name" in d else "Custom Output"
                 details["custom_output"][table_name].append(d["custom_output"])
 
-            elif "type" in d and "metric" in d and "unit" in d:
+            if (
+                "type" in d
+                and "metric" in d
+                and "unit" in d
+                and "custom_output" not in d
+            ):
                 # new format
+                getLogger().info("New format")
                 key = d["type"] + " " + d["metric"]
                 if "info_string" in d:
                     if "info_string" in details[key]:
@@ -75,8 +81,7 @@ class JsonConverter(DataConverterBase):
                         new_string = d["info_string"]
                         if old_string != new_string:
                             getLogger().warning(
-                                "info_string values "
-                                "for {} ".format(key)
+                                "info_string values " "for {} ".format(key)
                                 + "do not match.\n"
                                 + "Current info_string: "
                                 + "{}\n ".format(old_string)
@@ -137,3 +142,6 @@ class JsonConverter(DataConverterBase):
             ), "Field {} does not match in different entries".format(k)
         else:
             detail[k] = d[k]
+
+
+registerConverter(JsonConverter)

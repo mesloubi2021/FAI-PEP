@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -24,15 +26,17 @@ from utils.utilities import getRunStatus, setRunStatus
 
 
 class IOSPlatform(PlatformBase):
-    def __init__(self, tempdir, idb, args, platform_meta, usb_controller=None):
+    def __init__(
+        self, tempdir, platform_util, args, platform_meta, usb_controller=None
+    ):
         super(IOSPlatform, self).__init__(
             tempdir,
             args.ios_dir,
-            idb,
+            platform_util,
             args.hash_platform_mapping,
             args.device_name_mapping,
         )
-        self.setPlatformHash(idb.device)
+        self.setPlatformHash(platform_util.device)
         if self.platform:
             self.platform_model = (
                 re.findall(r"(.*)-[0-9.]+", self.platform) or [self.platform]
@@ -44,6 +48,7 @@ class IOSPlatform(PlatformBase):
         self.usb_controller = usb_controller
         self.type = "ios"
         self.app = None
+        self.use_xcrun = not (int(self.platform_os_version.split(".")[0]) < 17)
 
     def getKind(self):
         if self.platform_model and self.platform_os_version:
@@ -71,7 +76,7 @@ class IOSPlatform(PlatformBase):
         dirs = [
             f for f in os.listdir(app_dir) if os.path.isdir(os.path.join(app_dir, f))
         ]
-        assert len(dirs) == 1, "Only one app in the Payload directory"
+        assert len(dirs) == 1, f"Payload must contain exactly 1 app, found {len(dirs)}"
         app_name = dirs[0]
         self.app = os.path.join(app_dir, app_name)
         (base_name, _) = os.path.splitext(app_name)
@@ -85,12 +90,14 @@ class IOSPlatform(PlatformBase):
         # We know this command will fail. Avoid propogating this
         # failure to the upstream
         success = getRunStatus()
-        self.util.run(["--bundle", self.app, "--uninstall", "--justlaunch"])
+        self.util.uninstallApp(self.util.bundle_id if self.use_xcrun else self.app)
+        if self.use_xcrun:
+            self.util.run(["install", "app", self.app, "--device", self.util.device])
         setRunStatus(success, overwrite=True)
 
     def postprocess(self, *args, **kwargs):
         success = getRunStatus()
-        self.util.run(["--bundle", self.app, "--uninstall_only"])
+        # self.util.uninstallApp(self.app)
         setRunStatus(success, overwrite=True)
 
     def runBenchmark(self, cmd, *args, **kwargs):
@@ -106,17 +113,39 @@ class IOSPlatform(PlatformBase):
         tgt_argument_filename = os.path.join(self.tgt_dir, "benchmark.json")
         self.util.push(argument_filename, tgt_argument_filename)
 
-        run_cmd = [
-            "--bundle",
-            self.app,
-            "--noninteractive",
-            "--noinstall",
-            "--unbuffered",
-        ]
+        logfile = os.path.join(self.tempdir, "__app_stdout.json")
+        run_cmd = (
+            [
+                "process",
+                "launch",
+                "--no-activate",
+                "--terminate-existing",
+                "--user",
+                "mobile",
+                "--verbose",
+                "--json-output",
+                logfile,
+                "--device",
+                self.util.device,
+                self.util.bundle_id,
+            ]
+            if self.use_xcrun
+            else [
+                "--bundle",
+                self.app,
+                "--noninteractive",
+                "--noinstall",
+                "--unbuffered",
+            ]
+        )
         platform_args = {}
         if "platform_args" in kwargs:
             platform_args = kwargs["platform_args"]
-            if "power" in platform_args and platform_args["power"]:
+            if (
+                "power" in platform_args
+                and platform_args["power"]
+                and not self.use_xcrun
+            ):
                 platform_args["timeout"] = 10
                 run_cmd += ["--justlaunch"]
             if platform_args.get("profiling_args", {}).get("enabled", False):
@@ -151,12 +180,44 @@ class IOSPlatform(PlatformBase):
         meta = {}
 
         if arguments:
-            run_cmd += [
-                "--args",
-                " ".join(["--" + x + " " + arguments[x] for x in arguments]),
-            ]
+            if not self.use_xcrun:
+                run_cmd += [
+                    "--args",
+                    " ".join(["--" + x + " " + arguments[x] for x in arguments]),
+                ]
+            else:
+                for x in arguments:
+                    run_cmd += [f"--{x}"]
+                    run_cmd += [f"{arguments[x]}"]
         # the command may fail, but the err_output is what we need
         log_screen = self.util.run(run_cmd, **platform_args)
+        if os.path.isfile(logfile):
+            with open(logfile, "r") as f:
+                getLogger().info(f.read())
+
+        if self.use_xcrun:
+            # Since XCRun doesn't provide logs, we generate a file with the logs on the device (for ExecuTorch benchmark) at /tmp/BENCH_LOG. Once the benchmark completes, /tmp/BENCH_DONE will be created.
+            # The xcrun command to detect fiels takes a while. 15 seconds should be enough for the commandto complete.
+            timeout = kwargs.get("platform_args", {}).get("timeout", 1200)
+            while "tmp/BENCH_DONE" not in self.util.listFiles() and timeout >= 0:
+                time.sleep(15)
+                timeout -= 15
+            if "tmp/BENCH_DONE" not in self.util.listFiles():
+                getLogger().info(
+                    f"Benchmark did not complete within the timeout period ({timeout} seconds)."
+                )
+
+            self.util.pull("/tmp/BENCH_LOG", logfile)
+
+            if os.path.isfile(logfile):
+                logfile_reader = open(logfile, "r")
+                logfile_contents = logfile_reader.read()
+                getLogger().info("\n\t[ ======= Benchmark Logs ======= ]")
+                getLogger().info(logfile_contents)
+                getLogger().info("\t[ ===== End Benchmark Logs ===== ]\n")
+                log_screen = logfile_contents
+                logfile_reader.close()
+
         return log_screen, meta
 
     def rebootDevice(self):

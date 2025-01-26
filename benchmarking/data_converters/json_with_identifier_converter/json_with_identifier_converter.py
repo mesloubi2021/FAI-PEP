@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -11,6 +13,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 from data_converters.data_converter_base import DataConverterBase
+from data_converters.data_converters import registerConverter
 from data_converters.json_converter.json_converter import JsonConverter
 
 
@@ -18,7 +21,8 @@ class JsonWithIdentifierConverter(DataConverterBase):
     def __init__(self):
         self.json_converter = JsonConverter()
 
-    def getName(self):
+    @staticmethod
+    def getName():
         return "json_with_identifier_converter"
 
     def collect(self, data, args=None):
@@ -39,3 +43,6 @@ class JsonWithIdentifierConverter(DataConverterBase):
 
     def convert(self, data):
         return self.json_converter.convert(data)
+
+
+registerConverter(JsonWithIdentifierConverter)

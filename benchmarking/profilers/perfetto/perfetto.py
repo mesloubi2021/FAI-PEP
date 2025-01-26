@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2021-present, Facebook, Inc.
 # All rights reserved.
@@ -60,7 +62,6 @@ class BatteryState(Enum):
 
 
 class Perfetto(ProfilerBase):
-
     CONFIG_FILE = "perfetto.conf"
     DEVICE_DIRECTORY = "/data/local/tmp/perf"
     DEVICE_TRACE_DIRECTORY = "/data/misc/perfetto-traces"

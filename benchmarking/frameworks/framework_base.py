@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -21,6 +23,12 @@ from copy import deepcopy
 
 from bridge.file_storage.upload_files.file_uploader import FileUploader
 from data_converters.data_converters import getConverters
+
+# Import these two converters so that they are registered and available to all frameworks.
+from data_converters.json_converter.json_converter import JsonConverter  # noqa
+from data_converters.json_with_identifier_converter.json_with_identifier_converter import (  # noqa
+    JsonWithIdentifierConverter,  # noqa
+)
 from platforms.platforms import getHostPlatform
 from profilers.perfetto.perfetto import PerfettoAnySupported
 from six import string_types
@@ -306,16 +314,6 @@ class FrameworkBase:
                 voltage = (
                     float(monsoon_args["voltage"]) if "voltage" in monsoon_args else 4.0
                 )
-                threshold = float(
-                    monsoon_args["threshold"] if "threshold" in monsoon_args else 300
-                )
-                window_size_in_ms = float(
-                    monsoon_args["window_size"]
-                    if "window_size" in monsoon_args
-                    else 1000
-                )
-                # each sample is 200us
-                window_size = int(window_size_in_ms / 0.2)
                 output = collectPowerData(
                     platform.platform_hash,
                     collection_time,
@@ -323,8 +321,6 @@ class FrameworkBase:
                     test["iter"],
                     method=test["method"] if "method" in test else "monsoon",
                     monsoon_map=self.args.monsoon_map,
-                    threshold=threshold,
-                    window_size=window_size,
                 )
                 platform.waitForDevice(20)
                 # kill the process if exists
@@ -431,47 +427,7 @@ class FrameworkBase:
         # field converter, and specify which convert to use to
         # convert the metrics
         if output_files:
-            to_upload = {}
-            for filename in output_files:
-                file = output_files[filename]
-                output_file_spec = test["output_files"][filename]
-                # if files should be uploaded, upload and add location to meta data.
-                if output_file_spec.get("upload", False):
-                    to_upload.update({filename: file})
-                # if output_file can be converted for data, convert and merge output.
-                converter = output_file_spec.get("converter")
-                if not converter:
-                    continue
-                assert "name" in converter, "converter field must have a name"
-                assert (
-                    converter["name"] in self.converters
-                ), "Unknown converter {}".format(converter["name"])
-                converter_class = self.converters[converter["name"]]
-                args = converter.get("args")
-                with open(file, "r") as f:
-                    content = f.read()
-                convert = converter_class()
-                results, _ = convert.collect(content, args)
-                one_output = convert.convert(results)
-                deepMerge(output, one_output)
-            if to_upload:
-                output_file_uploader = FileUploader("output_files").get_uploader()
-                output_file_meta = {}
-                for filename, file in to_upload.items():
-                    try:
-                        getLogger().info(f"Uploading {filename} ({file}) to manifold")
-                        url = output_file_uploader.upload_file(file)
-                        output_file_meta.update({filename: url})
-                        getLogger().info(f"{file} uploaded to {url}")
-                    except Exception:
-                        getLogger().exception(
-                            f"Could not upload output file {file}. Skipping."
-                        )
-                if output_file_meta:
-                    if "output_files" in output["meta"]:
-                        output["meta"]["output_files"].update(output_file_meta)
-                    else:
-                        output["meta"].update({"output_files": output_file_meta})
+            self._handle_output_files(output_files, test["output_files"], output)
 
         platform.cleanup()
 
@@ -618,11 +574,13 @@ class FrameworkBase:
             default_profiler = (
                 "xctrace"
                 if platform.type == "ios"
-                else "simpleperf"
-                if ["cpu"] == types
-                else "perfetto"
-                if PerfettoAnySupported(types)
-                else "<unspecified>"
+                else (
+                    "simpleperf"
+                    if ["cpu"] == types
+                    else "perfetto"
+                    if PerfettoAnySupported(types)
+                    else "<unspecified>"
+                )
             )
             profiler = profiling_args.setdefault("profiler", default_profiler)
             default_type = "memory" if profiler == "perfetto" else "cpu"
@@ -711,25 +669,53 @@ class FrameworkBase:
             value = string_map[name]
             deepReplace(root, "{" + name + "}", value)
 
-    def _detect_fetch_files(self, platform, grep, retry=1, silent=False, shell=True):
-        """
-        Detects and fetches files ending containing "grep" from the device.
-        """
-        cmd = ["ls", platform.getOutputDir()]
-        if "android" in platform.getOS().lower():
-            cmd = ["shell"] + cmd
-
-        files = platform.util.run(cmd, shell=False, retry=retry, silent=silent)
-        matched_files = [f for f in files if grep in f]
-
-        if not silent:
-            getLogger().info(f"Matched files: {matched_files}.")
-
-        for f in matched_files:
-            platform.moveFilesFromPlatform(
-                files=os.path.join(platform.getOutputDir(), f),
-                target_dir=self.tempdir,
-                delete=False,
+    # Mutates the output dict with updated paths
+    # Avoid overriding this function - instead, create & register a custom converter for any files that need processing
+    def _handle_output_files(
+        self, output_files: dict, output_file_specs: dict, output: dict
+    ) -> None:
+        to_upload = {}
+        for filename in output_files:
+            file = output_files[filename]
+            output_file_spec = output_file_specs[filename]
+            # if files should be uploaded, upload and add location to meta data.
+            if output_file_spec.get("upload", False):
+                to_upload.update({filename: file})
+            # if output_file can be converted for data, convert and merge output.
+            converter = output_file_spec.get("converter")
+            if not converter:
+                continue
+            assert "name" in converter, "converter field must have a name"
+            assert converter["name"] in self.converters, "Unknown converter {}".format(
+                converter["name"]
             )
-
-        return [os.path.join(self.tempdir, f) for f in matched_files]
+            converter_class = self.converters[converter["name"]]
+            args = converter.get("args")
+            if file.endswith(".bin"):
+                with open(file, "rb") as f:
+                    content = f.read()
+            else:
+                with open(file, "r") as f:
+                    content = f.read()
+            convert = converter_class()
+            results, _ = convert.collect(content, args)
+            one_output = convert.convert(results)
+            deepMerge(output, one_output)
+        if to_upload:
+            output_file_uploader = FileUploader("output_files").get_uploader()
+            output_file_meta = {}
+            for filename, file in to_upload.items():
+                try:
+                    getLogger().info(f"Uploading {filename} ({file}) to manifold")
+                    url = output_file_uploader.upload_file(file)
+                    output_file_meta.update({filename: url})
+                    getLogger().info(f"{file} uploaded to {url}")
+                except Exception:
+                    getLogger().exception(
+                        f"Could not upload output file {file}. Skipping."
+                    )
+            if output_file_meta:
+                if "output_files" in output["meta"]:
+                    output["meta"]["output_files"].update(output_file_meta)
+                else:
+                    output["meta"].update({"output_files": output_file_meta})

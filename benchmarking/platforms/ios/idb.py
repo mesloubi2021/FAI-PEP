@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -94,3 +96,6 @@ class IDB(PlatformUtilBase):
                 exc_info=True,
             )
             return -1
+
+    def uninstallApp(self, bundle):
+        self.run(["--bundle", bundle, "--uninstall", "--justlaunch"])

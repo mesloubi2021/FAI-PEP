@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2020-present, Facebook, Inc.
 # All rights reserved.
@@ -27,7 +29,9 @@ from platforms.android.adb import ADB
 from platforms.battery_state import getBatteryState
 from platforms.platforms import getDeviceList
 from reboot_device import reboot as reboot_device
+from utils.acroname_usb_controller import AcronameUSBController
 from utils.custom_logger import getLogger
+
 
 REBOOT_INTERVAL = datetime.timedelta(hours=8)
 MINIMUM_DM_INTERVAL = 10
@@ -95,12 +99,12 @@ class DeviceManager:
         self.async_event_loop = None
         self.device_monitor = Thread(target=self._runDeviceMonitor)
         self.device_monitor.start()
-        if self.args.usb_hub_device_mapping:
-            from utils.usb_controller import USBController
 
-            self.usb_controller = USBController(self.args.usb_hub_device_mapping)
-        else:
-            self.usb_controller = None
+        self.usb_controller = (
+            AcronameUSBController(hub_map=self.args.usb_hub_device_mapping)
+            if self.args.usb_hub_device_mapping
+            else AcronameUSBController()
+        )
 
     def getLabDevices(self):
         """Return a reference to the lab's device meta data."""
@@ -419,7 +423,7 @@ class CoolDownDevice(Thread):
             getLogger().info(
                 f"\nBattery status: {battery_state['status']}"
                 + f"\nBattery charge level: {battery_state['charge_level']}%"
-                + f"\nBattery temperature: {battery_state['temperature']}\xB0C"
+                + f"\nBattery temperature: {battery_state['temperature']}\xb0C"
             )
             if battery_state["disconnected"]:
                 getLogger().warning(
@@ -452,9 +456,10 @@ class CoolDownDevice(Thread):
             battery_state = getBatteryState(
                 self.device["hash"], self.args.platform, self.args.android_dir
             )
-            if (battery_state["supported"]) and battery_state[
-                "charge_level"
-            ] < charge_threshold:
+            if (
+                (battery_state["supported"])
+                and battery_state["charge_level"] < charge_threshold
+            ):
                 getLogger().info(
                     f"Battery charge of {battery_state['charge_level']}% is below threshold of {charge_threshold}%; Sleep another {self.cooldown} seconds."
                 )

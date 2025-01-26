@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -66,7 +68,7 @@ class Devices:
             self._elaborateOneDevice(device_abbr_pair[0], device_abbr_pair[1])
 
     def _elaborateOneDevice(self, device, abbr):
-        assert (
-            abbr not in self.devices
-        ), "Abbreviation " + "{} is already specified in the device list".format(abbr)
+        assert abbr not in self.devices, (
+            "Abbreviation " + "{} is already specified in the device list".format(abbr)
+        )
         self.devices[abbr] = device

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -395,9 +397,11 @@ class RunRemote:
                 "programs" in self.info["treatment"]
                 and "program" in self.info["treatment"]["programs"]
             )
-            else self.args.custom_binary
-            if self.args.custom_binary
-            else self.args.pre_built_binary
+            else (
+                self.args.custom_binary
+                if self.args.custom_binary
+                else self.args.pre_built_binary
+            )
         )
         t = BuildProgram(
             self.args, self.file_handler, self.tempdir, program_filenames, binary
@@ -532,17 +536,17 @@ class RunRemote:
             if "files" in one_benchmark["model"]:
                 for field in one_benchmark["model"]["files"]:
                     value = one_benchmark["model"]["files"][field]
-                    assert (
-                        "location" in value
-                    ), "location field is missing in benchmark " "{}".format(filename)
+                    assert "location" in value, (
+                        "location field is missing in benchmark " "{}".format(filename)
+                    )
                     ref_path = ["files", field]
                     if self._uploadFile(value, filename, benchmark, ref_path):
                         del_paths.append(ref_path)
             if "libraries" in one_benchmark["model"]:
                 for value in one_benchmark["model"]["libraries"]:
-                    assert (
-                        "location" in value
-                    ), "location field is missing in benchmark " "{}".format(filename)
+                    assert "location" in value, (
+                        "location field is missing in benchmark " "{}".format(filename)
+                    )
                     self._uploadFile(value, filename, benchmark)
 
         for del_path in del_paths:
@@ -591,12 +595,8 @@ class RunRemote:
         Note: Support the file in model first
         """
         if location.startswith("//repo"):
-            assert (
-                ref_path is not None
-            ), "repo is not yet \
-                supported for {}".format(
-                location
-            )
+            assert ref_path is not None, "repo is not yet \
+                supported for {}".format(location)
             for side in self.info:
                 if side == "extra":
                     continue
@@ -782,19 +782,30 @@ class RunRemote:
 
     def _killJob(self):
         user_identifier = self.args.user_identifier
-        assert user_identifier, (
-            "User identifier must be specified for " "killing submitted jobs."
-        )
-        statuses = self.db.statusBenchmarks(user_identifier)
-        result = json.dumps(statuses)
-        status = json.loads(result)[-1]["status"]
-        if status in ["RUNNING", "QUEUE"]:
-            self.db.killBenchmarks(user_identifier)
-            getLogger().info("The job has been killed")
+        assert (
+            user_identifier
+        ), "User identifier must be specified for killing submitted jobs."
+        # If the provided user identifier is a file path
+        # read list of user identifiers from the file
+        if os.path.isfile(user_identifier):
+            with open(user_identifier, "r") as f:
+                user_identifiers = f.readlines()
+                user_identifiers = [
+                    user_identifier.strip() for user_identifier in user_identifiers
+                ]
         else:
-            getLogger().info(
-                "The job cannot be killed since its status is {}".format(status)
-            )
+            user_identifiers = [user_identifier]
+        for user_identifier in user_identifiers:
+            statuses = self.db.statusBenchmarks(user_identifier)
+            result = json.dumps(statuses)
+            status = json.loads(result)[-1]["status"]
+            if status in ["RUNNING", "QUEUE"]:
+                self.db.killBenchmarks(user_identifier)
+                getLogger().info(f"The job {user_identifier} has been killed")
+            else:
+                getLogger().info(
+                    f"The job {user_identifier} cannot be killed since its status is {status}"
+                )
 
     def _mobilelabResult(self, output):
         # always get the last result

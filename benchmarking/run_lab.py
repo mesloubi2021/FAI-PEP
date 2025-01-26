@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+# pyre-unsafe
+
 ##############################################################################
 # Copyright 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -405,6 +407,10 @@ class runAsync:
                 raw_args.append(self.args.platform_sig)
             if self.args.monsoon_map:
                 raw_args.extend(["--monsoon_map", str(self.args.monsoon_map)])
+            else:
+                from aibench.specifications.monsoon_map import monsoon_map
+
+                raw_args.extend(["--monsoon_map", json.dumps(monsoon_map)])
             if self.args.hash_platform_mapping:
                 # if the user provides filename, we will load it.
                 raw_args.append("--hash_platform_mapping")
